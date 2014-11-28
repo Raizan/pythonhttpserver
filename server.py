@@ -1,15 +1,17 @@
 import socket
 import select
 import os
+from subprocess import Popen, PIPE
 from ConfigParser import SafeConfigParser
 from math import floor, log, pow
 from bs4 import BeautifulSoup
 
-## What to do:  1. PHP interaction
-##              2. Multithreading
-
+"""
+What to do:  1. PHP interaction
+             2. Multithreading
+"""
 # Converting byte to higher measure unit
-def convertSize(size):
+def convert_size(size):
     size_name = ("KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
     i = int(floor(log(size, 1024)))
     p = pow(1024, i)
@@ -20,7 +22,7 @@ def convertSize(size):
         return '0B'
 
 # Change working directory to where server files are
-os.chdir('D:\\Tugas 3\\')
+os.chdir('D:\\Document\\IdeaProjects\\HTTPServer\\')
 
 # Reading configuration file for server settings
 parser = SafeConfigParser()
@@ -46,7 +48,6 @@ while True:
             input_socket.append(client_socket)
         else:
             request = sock.recv(1024)
-            print request
             if request:
                 req = request.split()
                 # Request example: GET / HTTP/1.1
@@ -118,7 +119,7 @@ while True:
                                     '<col width="80">', '<th>', 'Name', '</th>', '<th>', 'Size', '</th>', '</table>',
                                     '</body>']
                             links = []
-
+                            tr_pos = 0
                             # Find </table> position
                             for i in range(len(body)):
                                 if body[i] == '</table>':
@@ -129,7 +130,7 @@ while True:
                             for i in range(len(files)):
                                 temp = '<tr><td><a href=' + '\"' + file_names[i] + '\"' + '>' + files[i] + '</a></td>'
                                 size = os.path.getsize('.' + files_with_dir[i])
-                                converted = convertSize(size / 1024)
+                                converted = convert_size(size / 1024)
                                 temp = temp + '<td>' + converted + '</td></tr>'
                                 links.append(temp)
                                 body.insert(tr_pos, links[i])
@@ -149,40 +150,60 @@ while True:
 
                     elif os.path.isfile(path):
                         print client_addr, " LOG: File access request", path
-                        try:
-                            fopen = open(path, 'rb')
 
-                        except Exception:
-                            print client_addr, " LOG: Cannot access file"
+                        file_name, file_extension = os.path.splitext(path)
+                        file_name = file_name.split('\\')[-1] + file_extension
 
-                        else:
-                            mime_types = {'.txt': 'text/plain', '.ogv': 'video/ogg', '.mp3': 'audio/mpeg3',
-                                          '.html': 'text/html'}
+                        # PHP Handler here
+                        if file_extension == '.php':
+                            php_exe = "C:\\terminal\\php\\php.exe"
+                            php_file = "D:\\Document\\IdeaProjects\\HTTPServer\\" + file_name
+                            process = Popen([php_exe, '-f', php_file], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+                            output = process.communicate()
 
-                            file_name, file_extension = os.path.splitext(path)
-                            file_name = file_name.split('\\')[-1] + file_extension
+                            content_type = 'Content-Type: text/html\r\n'
+                            length = 'Content-Length: ' + str(len(output[0])) + '\r\n\r\n'
+                            response_header = ['HTTP/1.1 200 OK\r\n', content_type, length]
 
-                            if mime_types.has_key(file_extension) and file_extension != '.html':
-                                content_type = 'Content-Type: ' + mime_types[file_extension] + '\r\n'
-                                content_disposition = 'Content-Disposition: attachment; filename="' + file_name + '"\r\n'
-                            elif file_extension == '.html':
-                                content_type = 'Content-Type: text/html\r\n'
-                                content_disposition = ''
-                            else:
-                                content_type = 'Content-Type: application/octet-stream\r\n'
-                                content_disposition = 'Content-Disposition: attachment; filename=' + file_name + '\r\n'
-
-                            body = fopen.read()
-                            length = 'Content-Length: ' + str(len(body)) + '\r\n\r\n'
-
-                            if content_disposition != '':
-                                response_header = ['HTTP/1.1 200 OK\r\n', content_type, content_disposition, length]
-                            else:
-                                response_header = ['HTTP/1.1 200 OK\r\n', content_type, length]
-
-                            data = ''.join(response_header) + body
+                            data = ''.join(response_header) + output[0]
 
                             sock.sendall(data)
+
+                        else:
+                            try:
+                                fopen = open(path, 'rb')
+
+                            except Exception:
+                                print client_addr, " LOG: Cannot access file"
+
+                            else:
+                                mime_types = {'.txt': 'text/plain', '.ogv': 'video/ogg', '.mp3': 'audio/mpeg3',
+                                              '.html': 'text/html'}
+
+
+                                if file_extension in mime_types and file_extension != '.html':
+                                    content_type = 'Content-Type: ' + mime_types[file_extension] + '\r\n'
+                                    content_disposition = 'Content-Disposition: attachment; filename="' + file_name + '"\r\n'
+
+                                elif file_extension == '.html':
+                                    content_type = 'Content-Type: text/html\r\n'
+                                    content_disposition = ''
+
+                                else:
+                                    content_type = 'Content-Type: application/octet-stream\r\n'
+                                    content_disposition = 'Content-Disposition: attachment; filename=' + file_name + '\r\n'
+
+                                body = fopen.read()
+                                length = 'Content-Length: ' + str(len(body)) + '\r\n\r\n'
+
+                                if content_disposition != '':
+                                    response_header = ['HTTP/1.1 200 OK\r\n', content_type, content_disposition, length]
+                                else:
+                                    response_header = ['HTTP/1.1 200 OK\r\n', content_type, length]
+
+                                data = ''.join(response_header) + body
+
+                                sock.sendall(data)
 
                     # Not found
                     else:
