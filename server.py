@@ -1,3 +1,10 @@
+""" 
+An echo server that uses threads to handle multiple clients at a time. 
+Entering any line of input at the terminal will exit the server. 
+"""
+
+import sys
+import threading
 import socket
 import select
 import os
@@ -6,53 +13,78 @@ from ConfigParser import SafeConfigParser
 from math import floor, log, pow
 from bs4 import BeautifulSoup
 
-"""
-What to do:  1. PHP interaction
-             2. Multithreading
-"""
-# Converting byte to higher measure unit
-def convert_size(size):
-    size_name = ("KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
-    i = int(floor(log(size, 1024)))
-    p = pow(1024, i)
-    s = round(size / p, 2)
-    if (s > 0):
-        return '%s %s' % (s, size_name[i])
-    else:
-        return '0B'
 
-# Change working directory to where server files are
-os.chdir('D:\\Document\\IdeaProjects\\HTTPServer\\')
+class Server:
+    def __init__(self, server_address, port):
+        self.host = server_address
+        self.port = port
+        self.backlog = 5
+        self.size = 1024
+        self.server = None
+        self.threads = []
 
-# Reading configuration file for server settings
-parser = SafeConfigParser()
-parser.read('httpserver.conf')
+    def open_socket(self):
+        try:
+            self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server.bind((self.host,self.port))
+            self.server.listen(5)
+        except socket.error, (value,message):
+            if self.server:
+                self.server.close()
+            print "Could not open socket: " + message
+            sys.exit(1)
 
-# Define port and server address
-server = parser.get('http_server', 'server')
-port = parser.get('http_server', 'port')
-port = int(port)
+    def run(self):
+        self.open_socket()
+        input = [self.server]
+        running = 1
+        while running:
+            inputready,outputready,exceptready = select.select(input,[],[])
 
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            for s in inputready:
 
-s.bind((server, port))
-s.listen(5)
+                if s == self.server:
+                    # handle the server socket 
+                    c = Client(self.server.accept())
+                    # input.append(c.client)
+                    c.start()
+                    self.threads.append(c)
 
-input_socket = [s]
+                else:
+                    running = 0
 
-while True:
-    read_ready, write_ready, exception = select.select(input_socket, [], [])
-    for sock in read_ready:
-        if sock == s:
-            client_socket, client_addr = s.accept()
-            input_socket.append(client_socket)
+                    # close all threads
+
+        self.server.close()
+        for c in self.threads:
+            c.join()
+
+class Client(threading.Thread):
+    def __init__(self,(client,address)):
+        threading.Thread.__init__(self)
+        self.client = client
+        self.address = address
+        self.size = 1024
+
+    def convert_size(self, size):
+        size_name = ("KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+        i = int(floor(log(size, 1024)))
+        p = pow(1024, i)
+        s = round(size / p, 2)
+        if (s > 0):
+            return '%s %s' % (s, size_name[i])
         else:
-            request = sock.recv(1024)
+            return '0B'
+
+    def run(self):
+        running = 1
+        while running:
+            request = self.client.recv(1024)
             if request:
                 req = request.split()
                 # Request example: GET / HTTP/1.1
                 # Split example : ['GET','/','HTTP/1.1']
-                print client_addr, " LOG: Request received"
+                print self.address, " LOG: Request received"
                 if req[0] == 'GET':
                     # Get the requested URL
                     req[1] = req[1].replace('%20', ' ')
@@ -60,7 +92,7 @@ while True:
                     path = os.path.abspath(url)
 
                     if os.path.isdir(path):
-                        print client_addr, " LOG: Directory access to ", path
+                        print self.address, " LOG: Directory access to ", path
                         # Get file and folder list in path
                         dirlist = os.listdir(path)
                         there_is_index = 0
@@ -73,7 +105,7 @@ while True:
 
                         # If there's index.html file, then send that file
                         if there_is_index:
-                            print client_addr, " LOG: index.html found"
+                            print self.address, " LOG: index.html found"
                             try:
                                 fopen = open(index_path, 'rb')
                             except Exception:
@@ -84,14 +116,14 @@ while True:
                                 response_header = ['HTTP/1.1 200 OK\r\n', 'Content-Type: text/html; charset=UTF-8\r\n',
                                                    length]
                                 data = ''.join(response_header) + body
-                                sock.sendall(data)
+                                self.client.sendall(data)
 
                         # If there's no index.html file, then display list of files on that directory
                         else:
-                            print client_addr, " LOG: index.html not found"
+                            print self.address, " LOG: index.html not found"
                             files = []
 
-                            # [OS: WINDOWS] If last character of path is not '\', then add it 
+                            # [OS: WINDOWS] If last character of path is not '\', then add it
                             if path[-1] != "\\":
                                 filedir = path + '\\'
 
@@ -130,7 +162,7 @@ while True:
                             for i in range(len(files)):
                                 temp = '<tr><td><a href=' + '\"' + file_names[i] + '\"' + '>' + files[i] + '</a></td>'
                                 size = os.path.getsize('.' + files_with_dir[i])
-                                converted = convert_size(size / 1024)
+                                converted = self.convert_size(size / 1024)
                                 temp = temp + '<td>' + converted + '</td></tr>'
                                 links.append(temp)
                                 body.insert(tr_pos, links[i])
@@ -145,11 +177,11 @@ while True:
                                                length]
                             data = ''.join(response_header) + html
 
-                            sock.sendall(data)
-                            print client_addr, " LOG: File list sent"
+                            self.client.sendall(data)
+                            print self.address, " LOG: File list sent"
 
                     elif os.path.isfile(path):
-                        print client_addr, " LOG: File access request", path
+                        print self.address, " LOG: File access request", path
 
                         file_name, file_extension = os.path.splitext(path)
                         file_name = file_name.split('\\')[-1] + file_extension
@@ -167,14 +199,14 @@ while True:
 
                             data = ''.join(response_header) + output[0]
 
-                            sock.sendall(data)
+                            self.client.sendall(data)
 
                         else:
                             try:
                                 fopen = open(path, 'rb')
 
                             except Exception:
-                                print client_addr, " LOG: Cannot access file"
+                                print self.address, " LOG: Cannot access file"
 
                             else:
                                 mime_types = {'.txt': 'text/plain', '.ogv': 'video/ogg', '.mp3': 'audio/mpeg3',
@@ -203,11 +235,11 @@ while True:
 
                                 data = ''.join(response_header) + body
 
-                                sock.sendall(data)
+                                self.client.sendall(data)
 
                     # Not found
                     else:
-                        print client_addr, " LOG: Requested file or directory not found"
+                        print self.address, " LOG: Requested file or directory not found"
                         # Create page
                         html = ['<html>', '<head>', '<title>', 'SERVER TC - NOT FOUND', '</title>', '</head>',
                                 '</html>']
@@ -223,7 +255,27 @@ while True:
                                            length]
                         data = ''.join(response_header) + html
 
-                        sock.sendall(data)
+                        self.client.sendall(data)
+
             else:
-                sock.close()
-                input_socket.remove(sock)
+                self.client.close()
+                # input.remove(self.client)
+                running = 0
+
+if __name__ == "__main__":
+
+    # Change working directory to where server files are
+    os.chdir('D:\\Document\\IdeaProjects\\HTTPServer\\')
+
+    # Reading configuration file for server settings
+    parser = SafeConfigParser()
+    parser.read('httpserver.conf')
+
+    # Define port and server address
+    server_address = parser.get('http_server', 'server')
+    port = parser.get('http_server', 'port')
+    port = int(port)
+
+    # Run server
+    s = Server(server_address, port)
+    s.run()
